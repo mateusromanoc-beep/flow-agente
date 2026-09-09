@@ -1,0 +1,13 @@
+{
+  "name": "flow-agente",
+  "version": "1.0.0",
+  "description": "Flow Agente - Plataforma SaaS Multi-tenant de Atendimento via WhatsApp com IA",
+  "main": "index.html",
+  "scripts": {
+    "build": "echo 'Build complete'",
+    "start": "npx serve -s . -l 3000"
+  },
+  "dependencies": {
+    "serve": "^14.2.4"
+  }
+}
