@@ -1,0 +1,340 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  TENANT_ADMIN
+  AGENT
+}
+
+enum PlanType {
+  STARTER
+  PRO
+  ENTERPRISE
+  CUSTOM
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+enum ConnectionStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  QRCODE
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING_HUMAN
+  HUMAN_ATTENDING
+  RESOLVED
+  CLOSED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  DOCUMENT
+  VIDEO
+  LOCATION
+  SYSTEM
+}
+
+enum MessageSenderType {
+  CONTACT
+  AI
+  AGENT
+  SYSTEM
+  API
+}
+
+model Plan {
+  id                String       @id @default(uuid())
+  name              String
+  type              PlanType     @default(STARTER)
+  description       String?
+  priceMonthly      Float        @default(0.0)
+  maxWhatsapp       Int          @default(1)
+  maxAgents         Int          @default(2)
+  maxMessagesMonth  Int          @default(5000)
+  allowAiAgent      Boolean      @default(true)
+  allowApiAccess    Boolean      @default(true)
+  stripePriceId     String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  tenants           Tenant[]
+}
+
+model Tenant {
+  id                   String                 @id @default(uuid())
+  name                 String
+  slug                 String                 @unique
+  logoUrl              String?
+  primaryColor         String?                @default("#10B981")
+  isActive             Boolean                @default(true)
+  planId               String?
+  plan                 Plan?                  @relation(fields: [planId], references: [id])
+  subscriptionStatus   SubscriptionStatus     @default(ACTIVE)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  users                User[]
+  whatsappConnections  WhatsappConnection[]
+  contacts             Contact[]
+  conversations        Conversation[]
+  tags                 Tag[]
+  agentConfigs         AgentConfig[]
+  apiKeys              ApiKey[]
+  webhookSubscriptions WebhookSubscription[]
+  usageLogs            UsageLog[]
+  auditLogs            AuditLog[]
+
+  @@index([slug])
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  name          String
+  avatarUrl     String?
+  role          Role           @default(AGENT)
+  isActive      Boolean        @default(true)
+  tenantId      String?
+  tenant        Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  conversations Conversation[]
+  messages      Message[]
+  internalNotes InternalNote[]
+
+  @@index([tenantId])
+  @@index([email])
+}
+
+model WhatsappConnection {
+  id             String           @id @default(uuid())
+  tenantId       String
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  instanceName   String           @unique
+  provider       String           @default("evolution") // "evolution" or "meta_cloud"
+  phoneNumber    String?
+  status         ConnectionStatus @default(DISCONNECTED)
+  qrCode         String?          @db.Text
+  profilePicUrl  String?
+  webhookSecret  String?
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  conversations  Conversation[]
+  agentConfig    AgentConfig?
+
+  @@index([tenantId])
+  @@index([instanceName])
+}
+
+model AgentConfig {
+  id                    String              @id @default(uuid())
+  tenantId              String
+  tenant                Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsappConnectionId  String?             @unique
+  whatsappConnection    WhatsappConnection? @relation(fields: [whatsappConnectionId], references: [id], onDelete: SetNull)
+  name                  String              @default("Assistente Virtual")
+  promptSystem          String              @db.Text
+  modelName             String              @default("gemini-1.5-flash")
+  temperature           Float               @default(0.7)
+  isActive              Boolean             @default(true)
+  humanPauseMinutes     Int                 @default(300) // 5 horas padrão
+  splitDelimiter        String              @default("\\\\")
+  messageDelaySeconds   Int                 @default(1)
+  triggerHandoffKeywords String?            @default("atendente,humano,falar com alguém,suporte")
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@index([tenantId])
+}
+
+model Contact {
+  id              String         @id @default(uuid())
+  tenantId        String
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phoneNumber     String
+  name            String?
+  profilePicUrl   String?
+  email           String?
+  customFields    Json?
+  isBlocked       Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  conversations   Conversation[]
+  contactTags     ContactTag[]
+  internalNotes   InternalNote[]
+
+  @@unique([tenantId, phoneNumber])
+  @@index([tenantId])
+  @@index([phoneNumber])
+}
+
+model Tag {
+  id          String       @id @default(uuid())
+  tenantId    String
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  color       String       @default("#3B82F6")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  contactTags ContactTag[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model ContactTag {
+  contactId String
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tagId     String
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([contactId, tagId])
+}
+
+model Conversation {
+  id                   String             @id @default(uuid())
+  tenantId             String
+  tenant               Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId            String
+  contact              Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  whatsappConnectionId String
+  whatsappConnection   WhatsappConnection @relation(fields: [whatsappConnectionId], references: [id], onDelete: Cascade)
+  assignedUserId       String?
+  assignedUser         User?              @relation(fields: [assignedUserId], references: [id], onDelete: SetNull)
+  status               ConversationStatus @default(OPEN)
+  unreadCount          Int                @default(0)
+  lastMessageAt        DateTime           @default(now())
+  aiPausedUntil        DateTime?
+  isAiHandling         Boolean            @default(true)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  messages             Message[]
+  internalNotes        InternalNote[]
+
+  @@index([tenantId])
+  @@index([contactId])
+  @@index([status])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id             String            @id @default(uuid())
+  conversationId String
+  conversation   Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderType     MessageSenderType @default(CONTACT)
+  senderUserId   String?
+  senderUser     User?             @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+  type           MessageType       @default(TEXT)
+  content        String            @db.Text
+  mediaUrl       String?
+  externalId     String?
+  isFromMe       Boolean           @default(false)
+  status         String            @default("SENT") // PENDING, SENT, DELIVERED, READ, FAILED
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
+}
+
+model InternalNote {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content        String       @db.Text
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+model ApiKey {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  key         String    @unique
+  permissions Json?     // e.g. ["messages:send", "contacts:read", "contacts:write"]
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([key])
+}
+
+model WebhookSubscription {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url         String
+  events      Json     // e.g. ["message.received", "conversation.status_changed", "contact.created"]
+  secret      String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model UsageLog {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  action     String   // "MESSAGE_SENT", "AI_INFERENCE", "CONTACT_CREATED"
+  quantity   Int      @default(1)
+  cost       Float    @default(0.0)
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String?
+  action    String
+  resource  String
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([createdAt])
+}
